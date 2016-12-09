@@ -1,20 +1,3 @@
-//
-// serial.c / serial.cpp
-// A simple serial port writing example
-// Written by Ted Burke - last updated 13-2-2013
-//
-// To compile with MinGW:
-//
-//      gcc -o serial.exe serial.c
-//
-// To compile with cl, the Microsoft compiler:
-//
-//      cl serial.cpp
-//
-// To run:
-//
-//      serial.exe
-//
 
 #include <windows.h>
 #include <stdio.h>
@@ -23,67 +6,129 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <dirent.h>
 #include <sstream>
+
+
 using namespace std;
 
-int main()
+
+class SerialPort
 {
-    // Define the five bytes to send ("hello")
+private:
+    HANDLE hSerial;
+    DCB dcbSerialParams;
+    COMMTIMEOUTS timeouts;
 
 
-//char fname[256]="";
-//char fpath[1024]=;
-stringstream x;
-char path[]="D:\\r\\";
-char filename[]="L.amr";
 
-string file;
-x<<path<<filename;
-x>>file;
-x.clear();
-string r;
+    bool write(char [],int);
+    bool write(byte[],int);
 
-char cstr[file.length()+1];
-sprintf(cstr,"%s%s",path,filename);
-cstr[file.length()+1]='\0';
-cout<<endl<<(cstr);
-cout<<endl<<sizeof(cstr);
-delete [] cstr;
+    bool writeAndResponse(char [],int,char []);
+    bool writeAndResponse(byte [],int,char []);
 
-FILE *fd = fopen(cstr, "rb"); //fopen(file,"rb");
 
-//return 0;
-if(fd == NULL) {
-    cout << "Error opening file\n";
+public:
+    SerialPort()
+    {
+        dcbSerialParams = {0};
+        timeouts = {0};
+    }
+    bool init(char COMPORT[],long int BaudRate);
+
+    int writeFile(char path[],char filename[]);
+    int close();
+};
+
+
+int SerialPort::writeFile(char path[],char filename[])
+{
+    string file;
+    stringstream x;
+    x<<path<<filename;
+    x>>file;
+    x.clear();
+
+    char cstr[file.length()+1];
+    sprintf(cstr,"%s%s",path,filename);
+    cstr[file.length()+1]='\0';
+    cout<<endl<<(cstr);
+    cout<<endl<<sizeof(cstr);
+    delete [] cstr;
+
+    FILE *fd = fopen(cstr, "rb");
+
+    if(fd == NULL) {
+        cout << "Error opening file\n";
+        return 0;
+    }
+    fseek(fd, 0, SEEK_END);
+    long fileSize = ftell(fd);
+    byte *stream = (byte*)malloc(fileSize);
+    fseek(fd, 0, SEEK_SET);
+    long n_read=fread(stream, fileSize, 1, fd);
+    fclose(fd);
+
+    cout << endl <<"File Name : "<< filename;
+    cout << endl <<"File Size :"<<fileSize;
+    cout <<endl;
+
+    if(!writeAndResponse("AT\r\n",sizeof("AT\r\n"),"AT Response:"))
+    {
+        close();
+        return -1;
+    }
+
+
+    if(!writeAndResponse("AT+CFSINIT\r\n",sizeof("AT+CFSINIT\r\n"),"AT+CFSINIT Response:"))
+    {
+        close();
+        return -1;
+    }
+
+    string cmd;
+    x<<"AT+CFSWFILE=\""<<filename<<"\",1,"<<fileSize<<",25000";
+    x>>cmd;
+    char cmd2[cmd.length()+3];
+    sprintf(cmd2,"%s%s%s%d%s","AT+CFSWFILE=\"",filename,"\",1,",fileSize,",25000");
+    cmd2[cmd.length()]='\r';
+    cmd2[cmd.length()+1]='\n';
+    cmd2[cmd.length()+2]='\0';
+
+    if(!writeAndResponse(cmd2,sizeof(cmd2),"AT+CFSWFILE Response:"))
+    {
+        close();
+        return -1;
+    }
+    delete [] cmd2;
+
+    fprintf(stderr, "Sending bytes...");
+    // Send specified text (remaining command line arguments)
+    if(!writeAndResponse(stream,fileSize,"Send File Response:"))
+    {
+        close();
+        return -1;
+    }
+
+    if(!writeAndResponse("AT+CFSTERM\r\n", sizeof("AT+CFSTERM\r\n"),"AT+CFSTERM Response : "))
+    {
+        close();
+        return -1;
+    }
     return 0;
 }
-fseek(fd, 0, SEEK_END);
-long fileSize = ftell(fd);
-byte *stream = (byte*)malloc(fileSize);
-fseek(fd, 0, SEEK_SET);
-long n_read=fread(stream, fileSize, 1, fd);
-fclose(fd);
 
-cout << endl <<"File Name : "<< filename;
-cout << endl <<"File Size :"<<fileSize;
-cout <<endl;
-
-//return 0;
-
-    // Declare variables and structures
-    HANDLE hSerial;
-    DCB dcbSerialParams = {0};
-    COMMTIMEOUTS timeouts = {0};
-
-    // Open the highest available serial port number
+bool SerialPort::init(char COMPORT[],long int BaudRate)
+{
     fprintf(stderr, "Opening serial port...");
     hSerial = CreateFile(
-                "\\\\.\\COM3", GENERIC_READ|GENERIC_WRITE, 0, NULL,
+                COMPORT, GENERIC_READ|GENERIC_WRITE, 0, NULL,
                 OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
     if (hSerial == INVALID_HANDLE_VALUE)
     {
             fprintf(stderr, "Error\n");
-            return 1;
+            return false;
     }
     else fprintf(stderr, "OK\n");
 
@@ -94,10 +139,10 @@ cout <<endl;
     {
         fprintf(stderr, "Error getting device state\n");
         CloseHandle(hSerial);
-        return 1;
+        return false;
     }
 
-    dcbSerialParams.BaudRate = CBR_19200;
+    dcbSerialParams.BaudRate = BaudRate;
     dcbSerialParams.ByteSize = 8;
     dcbSerialParams.StopBits = ONESTOPBIT;
     dcbSerialParams.Parity = NOPARITY;
@@ -105,7 +150,7 @@ cout <<endl;
     {
         fprintf(stderr, "Error setting device parameters\n");
         CloseHandle(hSerial);
-        return 1;
+        return false;
     }
 
     // Set COM port timeout settings
@@ -118,121 +163,64 @@ cout <<endl;
     {
         fprintf(stderr, "Error setting timeouts\n");
         CloseHandle(hSerial);
-        return 1;
+        return false;
     }
+}
 
-   DWORD bytes_written, total_bytes_written = 0;
+bool SerialPort::writeAndResponse(char ws[],int sze,char prompt[])
+{
+    if(write(ws,sze))
+    {
+        char buffer[1024];
+        int cnt;
+        strcpy(buffer,"");
+        ReadFile(hSerial,buffer,sizeof(buffer),NULL,NULL);
+        cout<<prompt;
+        cout<<buffer;
+        return true;
+    }
+    return false;
+}
 
-    if(!WriteFile(hSerial, "AT\r\n", sizeof("AT\r\n"), &bytes_written, NULL))
+bool SerialPort::writeAndResponse(byte ws[],int sze,char prompt[])
+{
+    if(write(ws,sze))
+    {
+        char buffer[1024];
+        int cnt;
+        strcpy(buffer,"");
+        ReadFile(hSerial,buffer,sizeof(buffer),NULL,NULL);
+        cout<<prompt;
+        cout<<buffer;
+        return true;
+    }
+    return false;
+}
+
+bool SerialPort::write(byte s[],int sze)
+{
+    if(!WriteFile(hSerial, s, sze, NULL, NULL))
     {
         fprintf(stderr, "Error\n");
         CloseHandle(hSerial);
-        return 1;
+        return false;
     }
+    return true;
+}
 
-    char buffer[1024];
-    int cnt;
-    strcpy(buffer,"");
-    ReadFile(hSerial,buffer,sizeof(buffer),&bytes_written,NULL);
-    cout<<"AT Response : ";
-    cout<<buffer;
-    //if(strcmp(buffer,"\r\nOK\r\n"))
-    //    printf("\nAT OK");
-
-    if(!WriteFile(hSerial, "AT+CFSINIT\r\n", sizeof("AT+CFSINIT\r\n"), &bytes_written, NULL))
+bool SerialPort::write(char s[],int sze)
+{
+    if(!WriteFile(hSerial, s, sze, NULL, NULL))
     {
         fprintf(stderr, "Error\n");
         CloseHandle(hSerial);
-        return 1;
+        return false;
     }
-    strcpy(buffer,"");
-    ReadFile(hSerial,buffer,sizeof(buffer),&bytes_written,NULL);
-    cout<<"AT+CFSINIT Response : ";
-    cout<<buffer;
+    return true;
+}
 
-//    if(strcmp(buffer,"\r\nOK\r\n"))
-//        printf("\nCFSINIT OK");
-    string cmd;
-    x<<"AT+CFSWFILE=\""<<filename<<"\",1,"<<fileSize<<",25000";
-    x>>cmd;
-    char cmd2[cmd.length()+3];
-    sprintf(cmd2,"%s%s%s%d%s","AT+CFSWFILE=\"",filename,"\",1,",fileSize,",25000");
-    cmd2[cmd.length()]='\r';
-    cmd2[cmd.length()+1]='\n';
-    cmd2[cmd.length()+2]='\0';
-
-    //if(!WriteFile(hSerial, "AT+CFSWFILE=\"4.amr\",1,1990,25000\r\n", sizeof("AT+CFSWFILE=\"4.amr\",1,1990,25000\r\n"), &bytes_written, NULL))
-
-    //cout<<endl<<cmd2<<"Size:"<<sizeof(cmd2);
-    //cout<<endl<<"AT+CFSWFILE=\"C.amr\",1,1990,25000\r\n"<<"Size:"<<sizeof("AT+CFSWFILE=\"C.amr\",1,1990,25000\r\n");
-    if(!WriteFile(hSerial, cmd2, sizeof(cmd2), &bytes_written, NULL))
-    {
-        fprintf(stderr, "Error\n");
-        CloseHandle(hSerial);
-        return 1;
-    }
-    delete [] cmd2;
-    strcpy(buffer,"");
-    ReadFile(hSerial,buffer,sizeof(buffer),&bytes_written,NULL);
-    cout<<"AT+CFSWFILE Response : ";
-    cout<<buffer;
-
-//    if(strcmp(buffer,"\r\nCONNECT\r\n"))
-//        printf("\nCONNECT");
-
-//char buffer[1024];
-//while (1) {
-    // Read data into buffer.  We may not have enough to fill up buffer, so we
-    // store how many bytes were actually read in bytes_read.
-//    int xf=open("D:\\Machine\\Final_Reading_Ring_DTMF_RPMOFF\\1.amr",O_RDONLY);
-//    int rd;
-   // while((rd=read(xf, buffer, sizeof(buffer)))>0)
-    //{
-      //  printf("%s",&buffer);
-        //p
-        //WriteFile(hSerial, p, rd, &bytes_written, NULL);
-    //}
-//{
-    // Send specified text (remaining command line arguments)
-    fprintf(stderr, "Sending bytes...");
-
-
-    if(!WriteFile(hSerial, stream, fileSize, &bytes_written, NULL))
-    {
-        fprintf(stderr, "Error\n");
-        CloseHandle(hSerial);
-        return 1;
-    }
-
-    strcpy(buffer,"");
-    ReadFile(hSerial,buffer,sizeof(buffer),&bytes_written,NULL);
-    cout<<"SEND FILE Response : ";
-    cout<<buffer;
-
-//    if(strcmp(buffer,"\r\nOK\r\n"))
-//        printf("\nFILE WRITTEN SUCCESSFULLY OK");
-
-    if(!WriteFile(hSerial, "AT+CFSTERM\r\n", sizeof("AT+CFSTERM\r\n"), &bytes_written, NULL))
-    {
-        fprintf(stderr, "Error\n");
-        CloseHandle(hSerial);
-        return 1;
-    }
-    strcpy(buffer,"");
-    ReadFile(hSerial,buffer,sizeof(buffer),&bytes_written,NULL);
-    cout<<"AT+CFSTERM Response : ";
-    cout<<buffer;
-
-//    if(strcmp(buffer,"\r\nOK\r\n")==0)
-//        printf("\nCFSTERM OK");
-
-    //ix++;
-
-//}
-    //fprintf(stderr, "%d bytes written\n", bwrite);
-
-    // Close serial port
-
+int SerialPort::close()
+{
     fprintf(stderr, "Closing serial port...");
     if (CloseHandle(hSerial) == 0)
     {
@@ -240,7 +228,42 @@ cout <<endl;
         return 1;
     }
     fprintf(stderr, "OK\n");
-
-    // exit normally
     return 0;
+}
+
+
+int main()
+{
+
+SerialPort p1;
+DIR *dir;
+struct dirent *ent;
+
+stringstream x;
+char path[]="D:\\r\\";
+//char filename[]="L.amr";
+
+if(!p1.init("\\\\.\\COM3",CBR_19200))
+    return -1;
+
+
+if ((dir = opendir (path)) != NULL) {
+  /* print all the files and directories within directory */
+  while ((ent = readdir (dir)) != NULL) {
+
+    char fname[ent->d_namlen];
+    sprintf(fname,"%s",ent->d_name);
+
+        printf ("%s\n", ent->d_name);
+        printf ("%s\n", fname);
+        if(p1.writeFile(path,fname)==-1)
+            return p1.close();
+  }
+  closedir (dir);
+} else {
+  /* could not open directory */
+  perror ("");
+  return EXIT_FAILURE;
+}
+    return p1.close();
 }
