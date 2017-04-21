@@ -98,10 +98,10 @@ int SerialPort::writeFile(char path[],char filename[])
     // }
 
     string cmd;
-    x<<"AT+FSWRITE="<<filename<<",0,"<<fileSize<<",25000";
+    x<<"AT+FSWRITE=C:\\User\\FTP\\"<<filename<<",0,"<<fileSize<<",25000";
     x>>cmd;
     char cmd2[cmd.length()+3];
-    sprintf(cmd2,"%s%s%s%d%s","AT+FSWRITE=",filename,",0,",fileSize,",25000");
+    sprintf(cmd2,"%s%s%s%d%s","AT+FSWRITE=C:\\User\\FTP\\",filename,",0,",fileSize,",25000");
     cmd2[cmd.length()]='\r';
     cmd2[cmd.length()+1]='\n';
     cmd2[cmd.length()+2]='\0';
@@ -252,7 +252,7 @@ DIR *dir;
 struct dirent *ent;
 
 stringstream x;
-char path[]="D:\\r\\";
+char path[]="D:\\N2\\";
 //char filename[]="L.amr";
 
 if(!p1.init("\\\\.\\COM4",CBR_19200))
